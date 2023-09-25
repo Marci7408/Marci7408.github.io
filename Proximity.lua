@@ -137,3 +137,120 @@ function Proximity:init()
             if enabled and (not activePrompts[keycode] and true or activePrompts[keycode].Attachment ~= promptAtt) then
                 -- Check if the prompt should be activated.
                 local result = CastLOS(promptAtt, los, distance) -- Calculate
+-- This script handles ProximityPrompts, interactions, and line of sight checks.
+-- Function to handle remote interaction requests from other players
+local function HandleRemoteInteraction(player, attachment)
+    -- Implement the logic to handle remote interactions here.
+    print(player.Name .. " initiated a remote interaction with attachment:", attachment)
+end
+
+-- Connect the remote event for remote interactions
+ISEvent.OnServerEvent:Connect(HandleRemoteInteraction)
+
+-- Function to clean up inactive prompts
+local function CleanupInactivePrompts()
+    while true do
+        wait(1) -- Wait for a while before cleaning up inactive prompts.
+
+        for keycode, promptObj in pairs(activePrompts) do
+            if promptObj.Attachment.Parent == nil then
+                DeactivatePrompt(promptObj)
+            end
+        end
+    end
+end
+
+-- Start a new thread to clean up inactive prompts periodically
+spawn(CleanupInactivePrompts)
+
+-- Function to handle user input for local interactions
+local function HandleUserInput(input, gameProcessedEvent)
+    if gameProcessedEvent then
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local mouseTarget = InputService:GetMouseTarget() -- Get the target of the mouse.
+        if mouseTarget then
+            local part = mouseTarget.Parent
+            if pMap[part] then
+                for _, prompt in pairs(pMap[part]) do
+                    if activePrompts[prompt.Keycode] and not activePrompts[prompt.Keycode].IsLocal then
+                        -- Trigger the local interaction for the prompt.
+                        Proximity:LocalTrigger(prompt.Attachment)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Connect the input handling function to the UserInputService
+InputService.InputBegan:Connect(HandleUserInput)
+
+-- Function to handle character removal
+local function HandleCharacterRemoval(character)
+    for _, promptObj in pairs(activePrompts) do
+        if promptObj.Attachment.Parent == character then
+            DeactivatePrompt(promptObj)
+        end
+    end
+end
+
+-- Connect the character removal handling function
+Players.PlayerRemoving:Connect(function(player)
+    local character = player.Character
+    if character then
+        HandleCharacterRemoval(character)
+    end
+end)
+
+-- Function to handle character addition
+local function HandleCharacterAddition(character)
+    local characterRootPart = character:WaitForChild("HumanoidRootPart")
+    for _, promptObj in pairs(activePrompts) do
+        if promptObj.Attachment.Parent == nil then
+            DeactivatePrompt(promptObj)
+        elseif promptObj.Attachment.Parent == character then
+            promptObj.Part = characterRootPart
+        end
+    end
+end
+
+-- Connect the character addition handling function
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(HandleCharacterAddition)
+end)
+
+-- Function to handle attribute changes
+local function HandleAttributeChange(attachment, attribute)
+    for _, promptObj in pairs(activePrompts) do
+        if promptObj.Attachment == attachment then
+            if attribute == "Enabled" or attribute == "ActionText" then
+                -- Reevaluate prompt activation if 'Enabled' or 'ActionText' attribute changes.
+                local currentEnabled = attachment:GetAttribute("Enabled")
+                local currentActionText = attachment:GetAttribute("ActionText")
+                if currentEnabled and (not activePrompts[promptObj.Keycode] and true or activePrompts[promptObj.Keycode].Attachment ~= attachment) then
+                    local result = CastLOS(attachment, attachment:GetAttribute("RequiresLineOfSight"), attachment:GetAttribute("Distance"))
+                    if result.CastResult then
+                        local interaction = Interactions:Create(attachment.Parent, currentActionText)
+                        promptObj.Interaction = interaction
+                        pMap[attachment.Parent] = pMap[attachment.Parent] or {}
+                        table.insert(pMap[attachment.Parent], promptObj)
+                        ListenForInteractionActivation(interaction, promptObj)
+                    end
+                else
+                    DeactivatePrompt(promptObj)
+                end
+            end
+        end
+    end
+end
+
+-- Connect the attribute change handling function
+Collections:GetInstanceAddedSignal("Prompt"):Connect(function(attachment)
+    attachment.AttributeChanged:Connect(HandleAttributeChange)
+end)
+
+-- Return the Proximity module
+return Proximity
